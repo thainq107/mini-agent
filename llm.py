@@ -54,3 +54,5 @@ class OpenAIClient:
           time.sleep(wait_time)
         else:
           raise
+
+    raise RuntimeError("chat() exited retry loop without returning")

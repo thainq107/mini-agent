@@ -40,8 +40,7 @@ class ReActAgent:
 
       if finish_reason == "tool_calls":
         thought = choice.message.content or ""
-        if thought:
-          print(f"[Iter {iteration + 1}] Thought: {thought}")
+        print(f"[Iter {iteration + 1}] Thought: {thought}")
 
         assistant_msg = {"role": "assistant", "content": choice.message.content or ""}
         if choice.message.tool_calls:
@@ -88,6 +87,8 @@ class ReActAgent:
     tool_fn: Any = TOOL_REGISTRY[name]["function"]
     try:
       result = tool_fn(**args)
+      if isinstance(result, dict):
+        return json.dumps(result)
       return str(result)
     except Exception as e:
       return f"Error: {str(e)}"
@@ -106,7 +107,7 @@ When you have enough information to answer, provide your final answer.
 Use the available tools to:
 - Perform calculations (calculator)
 - Get the current year (get_current_year)
-- Search information (search_web)
+- Search information (web_search)
 - Get weather (get_weather)
 
 Think carefully about what tools you need, then use them."""
