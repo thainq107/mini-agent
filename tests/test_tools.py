@@ -1,6 +1,9 @@
+from unittest.mock import MagicMock, patch
+
+import httpx
 import pytest
 
-from tools import calculator, get_current_year, search_web, get_weather
+from tools import calculator, get_current_year, get_weather, web_search
 
 
 class TestCalculator:
@@ -60,13 +63,46 @@ class TestGetCurrentYear:
     assert len(result) == 4
 
 
-class TestSearchWeb:
-  """Test search_web tool."""
+class TestWebSearch:
+  """Test web_search tool (Tavily)."""
 
-  def test_search_web_returns_string(self) -> None:
-    result = search_web("test query")
-    assert isinstance(result, str)
-    assert "Mock search result" in result or len(result) > 0
+  def test_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TAVILY_API_KEY", "fake-key")
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "results": [
+            {"title": "Hanoi", "content": "Capital of Vietnam", "url": "https://x"},
+        ]
+    }
+    with patch("tools.httpx.post", return_value=mock_resp) as mock_post:
+      result = web_search("capital of Vietnam")
+    assert result["error"] is None
+    assert "Hanoi" in result["result"]
+    mock_post.assert_called_once()
+
+  def test_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TAVILY_API_KEY", "fake-key")
+    monkeypatch.setattr("tools.time.sleep", lambda _: None)
+    with patch("tools.httpx.post", side_effect=httpx.TimeoutException("slow")):
+      result = web_search("anything")
+    assert result["result"] == ""
+    assert "timeout" in result["error"].lower()
+
+  def test_rate_limit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TAVILY_API_KEY", "fake-key")
+    mock_resp = MagicMock()
+    mock_resp.status_code = 429
+    with patch("tools.httpx.post", return_value=mock_resp):
+      result = web_search("anything")
+    assert result["result"] == ""
+    assert "429" in result["error"] or "rate" in result["error"].lower()
+
+  def test_missing_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    result = web_search("anything")
+    assert result["result"] == ""
+    assert "TAVILY_API_KEY" in result["error"]
 
 
 class TestGetWeather:

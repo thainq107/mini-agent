@@ -1,7 +1,14 @@
 import ast
 import operator
+import os
+import time
 from datetime import datetime
 from typing import Any, Callable
+
+import httpx
+
+TAVILY_ENDPOINT = "https://api.tavily.com/search"
+TAVILY_MAX_RETRIES = 2
 
 
 def calculator(expression: str) -> str:
@@ -63,16 +70,62 @@ def get_current_year() -> str:
   return str(datetime.now().year)
 
 
-def search_web(query: str) -> str:
-  """Search the web (stub for lab).
+def web_search(query: str) -> dict[str, str | None]:
+  """Search the web via Tavily API.
 
   Args:
       query: Search query string.
 
   Returns:
-      Fake search result.
+      Dict with keys "result" (concatenated top results) and "error"
+      (None on success, error message otherwise).
   """
-  return f"Mock search result for '{query}': No real web access in lab mode."
+  api_key = os.getenv("TAVILY_API_KEY")
+  if not api_key:
+    return {"result": "", "error": "TAVILY_API_KEY not set"}
+
+  payload = {
+      "api_key": api_key,
+      "query": query,
+      "max_results": 3,
+      "search_depth": "basic",
+  }
+
+  last_error: str = ""
+  for attempt in range(TAVILY_MAX_RETRIES + 1):
+    try:
+      response = httpx.post(TAVILY_ENDPOINT, json=payload, timeout=10.0)
+      status = response.status_code
+      if status == 429:
+        return {"result": "", "error": "rate limit (429)"}
+      if 500 <= status < 600:
+        last_error = f"server error {status}"
+        if attempt < TAVILY_MAX_RETRIES:
+          time.sleep(2 ** attempt)
+          continue
+        return {"result": "", "error": last_error}
+      response.raise_for_status()
+      data = response.json()
+      results = data.get("results", []) or []
+      snippets = []
+      for item in results[:3]:
+        title = item.get("title", "")
+        content = item.get("content", "")
+        url = item.get("url", "")
+        snippets.append(f"- {title}: {content} ({url})")
+      return {"result": "\n".join(snippets) if snippets else "No results.", "error": None}
+    except httpx.TimeoutException as e:
+      last_error = f"timeout: {e}"
+      if attempt < TAVILY_MAX_RETRIES:
+        time.sleep(2 ** attempt)
+        continue
+      return {"result": "", "error": last_error}
+    except httpx.HTTPStatusError as e:
+      return {"result": "", "error": f"http error: {e}"}
+    except Exception as e:
+      return {"result": "", "error": f"{type(e).__name__}: {e}"}
+
+  return {"result": "", "error": last_error or "unknown error"}
 
 
 def get_weather(city: str) -> str:
@@ -123,13 +176,13 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
             },
         },
     },
-    "search_web": {
-        "function": search_web,
+    "web_search": {
+        "function": web_search,
         "schema": {
             "type": "function",
             "function": {
-                "name": "search_web",
-                "description": "Search the web for information.",
+                "name": "web_search",
+                "description": "Search the web via Tavily for up-to-date information.",
                 "parameters": {
                     "type": "object",
                     "properties": {
